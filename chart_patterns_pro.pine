@@ -1,0 +1,1004 @@
+// This Pine Script™ source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Ported from zeta-zetra/chart_patterns (Python) to Pine Script v6
+// Professional Auto Chart Pattern Detection Indicator
+
+//@version=6
+indicator("Auto Chart Patterns Pro [9 Patterns]", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500, max_bars_back=500)
+
+// ═══════════════════════════════════════════════════════════════
+// INPUTS
+// ═══════════════════════════════════════════════════════════════
+string grpGeneral    = "⚙️ General Settings"
+string grpPivot      = "📍 Pivot Points"
+string grpDouble     = "📊 Double Top / Bottom"
+string grpHS         = "👤 Head & Shoulders"
+string grpTriangle   = "🔺 Triangles"
+string grpFlag       = "🏳️ Flag"
+string grpPennant    = "🔻 Pennant"
+string grpColors     = "🎨 Colors"
+string grpAlerts     = "🔔 Alerts"
+string grpTable      = "📋 Info Table"
+
+// General
+i_lookback       = input.int(defval=30, title="Lookback Period", minval=10, maxval=200, group=grpGeneral, tooltip="Number of bars to scan for patterns")
+i_show_pivots    = input.bool(defval=false, title="Show Pivot Points", group=grpGeneral)
+i_max_patterns   = input.int(defval=3, title="Max Patterns to Show", minval=1, maxval=10, group=grpGeneral)
+i_label_size     = input.string(defval="Small", title="Label Size", options=["Tiny", "Small", "Normal"], group=grpGeneral)
+
+// Pivot Settings
+i_pivot_left     = input.int(defval=3, title="Pivot Left Bars", minval=1, maxval=15, group=grpPivot)
+i_pivot_right    = input.int(defval=3, title="Pivot Right Bars", minval=1, maxval=15, group=grpPivot)
+i_pivot_left_hs  = input.int(defval=10, title="H&S Main Pivot Left/Right", minval=3, maxval=20, group=grpPivot, tooltip="Larger interval for H&S main pivot detection")
+i_pivot_short_hs = input.int(defval=5, title="H&S Short Pivot Left/Right", minval=2, maxval=15, group=grpPivot, tooltip="Shorter interval for H&S detail pivots")
+
+// Double Top/Bottom
+i_double_en      = input.bool(defval=true, title="Enable", group=grpDouble)
+i_double_ratio   = input.float(defval=1.01, title="Max Peak Ratio", minval=1.001, maxval=1.05, step=0.001, group=grpDouble, tooltip="Max ratio between two peaks (1.01 = within 1%)")
+i_double_bot_ratio = input.float(defval=0.98, title="Min Trough Ratio", minval=0.95, maxval=0.999, step=0.001, group=grpDouble, tooltip="Min ratio between two troughs")
+
+// Head & Shoulders
+i_hs_en          = input.bool(defval=true, title="Enable H&S", group=grpHS)
+i_ihs_en         = input.bool(defval=true, title="Enable Inverse H&S", group=grpHS)
+i_hs_head_ratio  = input.float(defval=1.005, title="Head/Shoulder Min Ratio", minval=1.0001, maxval=1.05, step=0.001, group=grpHS, tooltip="Head must be this much higher than shoulders")
+i_hs_neck_slope  = input.float(defval=0.002, title="Max Neckline Slope", minval=0.0001, maxval=0.01, step=0.0001, group=grpHS, tooltip="Neckline must be approximately flat")
+i_hs_lookback    = input.int(defval=60, title="H&S Lookback", minval=20, maxval=200, group=grpHS)
+
+// Triangles
+i_tri_asc_en     = input.bool(defval=true, title="Enable Ascending", group=grpTriangle)
+i_tri_desc_en    = input.bool(defval=true, title="Enable Descending", group=grpTriangle)
+i_tri_sym_en     = input.bool(defval=true, title="Enable Symmetrical", group=grpTriangle)
+i_tri_r2         = input.float(defval=0.85, title="Min R² Fit", minval=0.5, maxval=0.99, step=0.01, group=grpTriangle, tooltip="Minimum linear fit quality")
+i_tri_min_pts    = input.int(defval=3, title="Min Pivot Points", minval=2, maxval=8, group=grpTriangle)
+i_tri_flat_tol   = input.float(defval=0.0001, title="Flat Line Tolerance", minval=0.00001, maxval=0.001, step=0.00001, group=grpTriangle, tooltip="Slope threshold for 'flat' lines")
+
+// Flag
+i_flag_en        = input.bool(defval=true, title="Enable", group=grpFlag)
+i_flag_r2        = input.float(defval=0.85, title="Min R² Fit", minval=0.5, maxval=0.99, step=0.01, group=grpFlag)
+i_flag_min_pts   = input.int(defval=3, title="Min Pivot Points", minval=2, maxval=8, group=grpFlag)
+i_flag_ratio_lo  = input.float(defval=0.85, title="Slope Ratio Lower", minval=0.5, maxval=1.0, step=0.01, group=grpFlag, tooltip="Lower bound for parallelism check")
+i_flag_ratio_hi  = input.float(defval=1.10, title="Slope Ratio Upper", minval=1.0, maxval=1.5, step=0.01, group=grpFlag, tooltip="Upper bound for parallelism check")
+
+// Pennant
+i_pennant_en     = input.bool(defval=true, title="Enable", group=grpPennant)
+i_pennant_r2     = input.float(defval=0.85, title="Min R² Fit", minval=0.5, maxval=0.99, step=0.01, group=grpPennant)
+i_pennant_min_pts = input.int(defval=3, title="Min Pivot Points", minval=2, maxval=8, group=grpPennant)
+i_pennant_ratio_lo = input.float(defval=0.90, title="Symmetry Ratio Lower", minval=0.5, maxval=1.0, step=0.01, group=grpPennant)
+i_pennant_ratio_hi = input.float(defval=1.05, title="Symmetry Ratio Upper", minval=1.0, maxval=1.5, step=0.01, group=grpPennant)
+
+// Colors
+i_col_double_top   = input.color(defval=color.new(#FF1744, 0), title="Double Top", group=grpColors)
+i_col_double_bot   = input.color(defval=color.new(#00E676, 0), title="Double Bottom", group=grpColors)
+i_col_hs           = input.color(defval=color.new(#FF6D00, 0), title="Head & Shoulders", group=grpColors)
+i_col_ihs          = input.color(defval=color.new(#00B0FF, 0), title="Inverse H&S", group=grpColors)
+i_col_tri_asc      = input.color(defval=color.new(#76FF03, 0), title="Ascending Triangle", group=grpColors)
+i_col_tri_desc     = input.color(defval=color.new(#FF3D00, 0), title="Descending Triangle", group=grpColors)
+i_col_tri_sym      = input.color(defval=color.new(#FFEA00, 0), title="Symmetrical Triangle", group=grpColors)
+i_col_flag         = input.color(defval=color.new(#E040FB, 0), title="Flag", group=grpColors)
+i_col_pennant      = input.color(defval=color.new(#18FFFF, 0), title="Pennant", group=grpColors)
+i_col_pivot_hi     = input.color(defval=color.new(#00E676, 50), title="Pivot High", group=grpColors)
+i_col_pivot_lo     = input.color(defval=color.new(#FF1744, 50), title="Pivot Low", group=grpColors)
+i_line_width       = input.int(defval=2, title="Pattern Line Width", minval=1, maxval=4, group=grpColors)
+
+// Alerts
+i_alert_double     = input.bool(defval=true, title="Double Top/Bottom Alert", group=grpAlerts)
+i_alert_hs         = input.bool(defval=true, title="H&S Alert", group=grpAlerts)
+i_alert_triangle   = input.bool(defval=true, title="Triangle Alert", group=grpAlerts)
+i_alert_flag       = input.bool(defval=true, title="Flag Alert", group=grpAlerts)
+i_alert_pennant    = input.bool(defval=true, title="Pennant Alert", group=grpAlerts)
+
+// Table
+i_show_table       = input.bool(defval=true, title="Show Info Table", group=grpTable)
+i_table_pos        = input.string(defval="Bottom Right", title="Position", options=["Top Left", "Top Right", "Bottom Left", "Bottom Right"], group=grpTable)
+
+// ═══════════════════════════════════════════════════════════════
+// TYPES
+// ═══════════════════════════════════════════════════════════════
+type PivotPoint
+    int   bar_idx
+    float price
+    int   ptype   // 1=low, 2=high, 3=both
+
+type PatternResult
+    string ptype       // "double_top", "double_bottom", "hs", "ihs", "asc_tri", "desc_tri", "sym_tri", "flag", "pennant"
+    int    detect_bar  // bar where detected
+    int[]  bar_indices // bar indices of key points
+    float[] prices     // prices of key points
+    float  sl_upper    // upper trendline slope (for regression patterns)
+    float  sl_lower    // lower trendline slope
+    float  int_upper   // upper trendline intercept
+    float  int_lower   // lower trendline intercept
+    float  target      // projected target price
+    bool   is_bullish  // direction
+
+// ═══════════════════════════════════════════════════════════════
+// VARIABLES
+// ═══════════════════════════════════════════════════════════════
+var array<PatternResult> detected_patterns = array.new<PatternResult>()
+var array<line>  pattern_lines  = array.new<line>()
+var array<label> pattern_labels = array.new<label>()
+var array<box>   pattern_boxes  = array.new<box>()
+var array<label> pivot_labels   = array.new<label>()
+
+// Pattern count tracking
+var int total_double_top = 0
+var int total_double_bot = 0
+var int total_hs = 0
+var int total_ihs = 0
+var int total_asc_tri = 0
+var int total_desc_tri = 0
+var int total_sym_tri = 0
+var int total_flag = 0
+var int total_pennant = 0
+
+// ═══════════════════════════════════════════════════════════════
+// PIVOT POINT DETECTION
+// Based on zeta-zetra pivot_points.py - find_pivot_point()
+// ═══════════════════════════════════════════════════════════════
+f_is_pivot_low(int idx, int left, int right) =>
+    bool is_low = true
+    for i = 1 to left
+        if low[idx] > low[idx + i]
+            is_low := false
+            break
+    if is_low
+        for i = 1 to right
+            if idx - i >= 0
+                if low[idx] > low[idx - i]
+                    is_low := false
+                    break
+    is_low
+
+f_is_pivot_high(int idx, int left, int right) =>
+    bool is_high = true
+    for i = 1 to left
+        if high[idx] < high[idx + i]
+            is_high := false
+            break
+    if is_high
+        for i = 1 to right
+            if idx - i >= 0
+                if high[idx] < high[idx - i]
+                    is_high := false
+                    break
+    is_high
+
+// Returns: 0=none, 1=pivot low, 2=pivot high, 3=both
+f_pivot_type(int idx, int left, int right) =>
+    bool pl = f_is_pivot_low(idx, left, right)
+    bool ph = f_is_pivot_high(idx, left, right)
+    pl and ph ? 3 : pl ? 1 : ph ? 2 : 0
+
+// ═══════════════════════════════════════════════════════════════
+// LINEAR REGRESSION (replaces scipy.stats.linregress)
+// Returns [slope, intercept, r_squared]
+// ═══════════════════════════════════════════════════════════════
+f_linregress(array<float> x_arr, array<float> y_arr) =>
+    int n = array.size(x_arr)
+    float slope = 0.0
+    float intercept = 0.0
+    float r2 = 0.0
+
+    if n >= 2
+        float sum_x = 0.0
+        float sum_y = 0.0
+        float sum_xy = 0.0
+        float sum_x2 = 0.0
+        float sum_y2 = 0.0
+
+        for i = 0 to n - 1
+            float xi = array.get(x_arr, i)
+            float yi = array.get(y_arr, i)
+            sum_x  += xi
+            sum_y  += yi
+            sum_xy += xi * yi
+            sum_x2 += xi * xi
+            sum_y2 += yi * yi
+
+        float mean_x = sum_x / n
+        float mean_y = sum_y / n
+        float ss_xx = sum_x2 - n * mean_x * mean_x
+        float ss_yy = sum_y2 - n * mean_y * mean_y
+        float ss_xy = sum_xy - n * mean_x * mean_y
+
+        if math.abs(ss_xx) > 1e-10
+            slope     := ss_xy / ss_xx
+            intercept := mean_y - slope * mean_x
+
+            if math.abs(ss_yy) > 1e-10
+                r2 := (ss_xy * ss_xy) / (ss_xx * ss_yy)
+
+    [slope, intercept, r2]
+
+// ═══════════════════════════════════════════════════════════════
+// HELPER: Collect pivots in a lookback window
+// ═══════════════════════════════════════════════════════════════
+f_collect_pivots(int lookback, int left, int right) =>
+    array<int>   hi_bars   = array.new<int>()
+    array<float> hi_prices = array.new<float>()
+    array<int>   lo_bars   = array.new<int>()
+    array<float> lo_prices = array.new<float>()
+    array<int>   all_bars  = array.new<int>()
+    array<float> all_pos   = array.new<float>()
+    array<int>   all_types = array.new<int>()
+
+    int start = math.min(lookback, bar_index)
+    for i = start to 0
+        int pt = f_pivot_type(i, left, right)
+        if pt == 1 or pt == 3
+            array.push(lo_bars, bar_index - i)
+            array.push(lo_prices, low[i])
+        if pt == 2 or pt == 3
+            array.push(hi_bars, bar_index - i)
+            array.push(hi_prices, high[i])
+        if pt != 0
+            array.push(all_bars, bar_index - i)
+            array.push(all_pos, pt == 1 ? low[i] : high[i])
+            array.push(all_types, pt)
+
+    [hi_bars, hi_prices, lo_bars, lo_prices, all_bars, all_pos, all_types]
+
+// ═══════════════════════════════════════════════════════════════
+// PATTERN DETECTION: DOUBLE TOP / BOTTOM
+// Based on zeta-zetra doubles.py
+// Requires exactly 5 pivots in window forming W or M shape
+// ═══════════════════════════════════════════════════════════════
+f_detect_double(int lookback, int left, int right) =>
+    PatternResult result = na
+
+    if not i_double_en
+        result
+    else
+        // Collect all pivots
+        array<int>   pvt_bars = array.new<int>()
+        array<float> pvt_pos  = array.new<float>()
+
+        int start = math.min(lookback, bar_index)
+        for i = start to 0
+            int pt = f_pivot_type(i, left, right)
+            if pt == 1
+                array.push(pvt_bars, bar_index - i)
+                array.push(pvt_pos, low[i] - syminfo.mintick)
+            else if pt == 2
+                array.push(pvt_bars, bar_index - i)
+                array.push(pvt_pos, high[i] + syminfo.mintick)
+            else if pt == 3
+                // Add as high (primary for double patterns)
+                array.push(pvt_bars, bar_index - i)
+                array.push(pvt_pos, high[i] + syminfo.mintick)
+
+        if array.size(pvt_bars) == 5
+            float p0 = array.get(pvt_pos, 0)
+            float p1 = array.get(pvt_pos, 1)
+            float p2 = array.get(pvt_pos, 2)
+            float p3 = array.get(pvt_pos, 3)
+            float p4 = array.get(pvt_pos, 4)
+
+            // Double Tops: valley-PEAK-valley-PEAK-valley
+            bool is_double_top = (p0 < p1) and (p0 < p3) and (p2 < p1) and (p2 < p3) and (p4 < p1) and (p4 < p3) and (p1 > p3) and (p1 / p3 <= i_double_ratio)
+
+            // Double Bottoms: peak-TROUGH-peak-TROUGH-peak
+            bool is_double_bot = (p0 > p1) and (p0 > p3) and (p2 > p1) and (p2 > p3) and (p4 > p1) and (p4 > p3) and (p1 < p3) and (p1 / p3 >= i_double_bot_ratio)
+
+            if is_double_top
+                int[] bars = array.from(array.get(pvt_bars, 0), array.get(pvt_bars, 1), array.get(pvt_bars, 2), array.get(pvt_bars, 3), array.get(pvt_bars, 4))
+                float[] prices = array.from(p0, p1, p2, p3, p4)
+                float neckline = math.min(p0, p2, p4)
+                float peak_avg = (p1 + p3) / 2
+                float tgt = neckline - (peak_avg - neckline)
+                result := PatternResult.new("double_top", bar_index, bars, prices, na, na, na, na, tgt, false)
+
+            if is_double_bot
+                int[] bars = array.from(array.get(pvt_bars, 0), array.get(pvt_bars, 1), array.get(pvt_bars, 2), array.get(pvt_bars, 3), array.get(pvt_bars, 4))
+                float[] prices = array.from(p0, p1, p2, p3, p4)
+                float neckline = math.max(p0, p2, p4)
+                float trough_avg = (p1 + p3) / 2
+                float tgt = neckline + (neckline - trough_avg)
+                result := PatternResult.new("double_bottom", bar_index, bars, prices, na, na, na, na, tgt, true)
+
+        result
+
+// ═══════════════════════════════════════════════════════════════
+// PATTERN DETECTION: HEAD & SHOULDERS
+// Based on zeta-zetra head_and_shoulders.py
+// ═══════════════════════════════════════════════════════════════
+f_detect_hs(int lookback) =>
+    PatternResult result = na
+
+    if not i_hs_en
+        result
+    else
+        int half = int(lookback / 2)
+        int center = half  // bars back from current bar
+
+        // Check if center is a pivot high (main + short)
+        bool main_ph = f_is_pivot_high(center, i_pivot_left_hs, i_pivot_left_hs)
+        bool short_ph = f_is_pivot_high(center, i_pivot_short_hs, i_pivot_short_hs)
+
+        if main_ph and short_ph
+            // Collect short pivots around center
+            array<float> maxim = array.new<float>()
+            array<int>   xxmax = array.new<int>()
+            array<float> minim = array.new<float>()
+            array<int>   xxmin = array.new<int>()
+            int maxb = 0
+            int maxa = 0
+            int minb = 0
+            int mina = 0
+
+            int scan_start = math.min(center + half, bar_index)
+            int scan_end   = math.max(center - half, 0)
+
+            for i = scan_start to scan_end
+                bool is_spl = f_is_pivot_low(i, i_pivot_short_hs, i_pivot_short_hs)
+                bool is_sph = f_is_pivot_high(i, i_pivot_short_hs, i_pivot_short_hs)
+
+                if is_spl
+                    array.push(minim, low[i])
+                    array.push(xxmin, bar_index - i)
+                    if i > center
+                        minb += 1
+                    else if i < center
+                        mina += 1
+
+                if is_sph
+                    array.push(maxim, high[i])
+                    array.push(xxmax, bar_index - i)
+                    if i > center
+                        maxb += 1
+                    else if i < center
+                        maxa += 1
+
+            if minb >= 1 and mina >= 1 and maxb >= 1 and maxa >= 1 and array.size(maxim) >= 3 and array.size(minim) >= 2
+                // Find head (highest peak)
+                int headidx = 0
+                float headval = array.get(maxim, 0)
+                for i = 1 to array.size(maxim) - 1
+                    if array.get(maxim, i) > headval
+                        headval := array.get(maxim, i)
+                        headidx := i
+
+                // Head must not be the last
+                if headidx > 0 and headidx < array.size(maxim) - 1
+                    float left_shoulder  = array.get(maxim, headidx - 1)
+                    float right_shoulder = array.get(maxim, headidx + 1)
+                    float head_price     = array.get(maxim, headidx)
+
+                    bool head_above_left  = head_price > left_shoulder and (head_price / left_shoulder) > i_hs_head_ratio
+                    bool head_above_right = head_price > right_shoulder and (head_price / right_shoulder) > i_hs_head_ratio
+
+                    // Neckline regression on lows
+                    array<float> xxmin_f = array.new<float>()
+                    for i = 0 to array.size(xxmin) - 1
+                        array.push(xxmin_f, float(array.get(xxmin, i)))
+                    [slmin, _, _] = f_linregress(xxmin_f, minim)
+
+                    bool neck_flat = math.abs(slmin) <= i_hs_neck_slope
+
+                    if head_above_left and head_above_right and neck_flat
+                        int ls_bar = array.get(xxmax, headidx - 1)
+                        int head_bar = array.get(xxmax, headidx)
+                        int rs_bar = array.get(xxmax, headidx + 1)
+                        int nl_bar = array.size(xxmin) >= 1 ? array.get(xxmin, 0) : ls_bar
+                        int nr_bar = array.size(xxmin) >= 2 ? array.get(xxmin, 1) : rs_bar
+
+                        int[] bars = array.from(ls_bar, nl_bar, head_bar, nr_bar, rs_bar)
+                        float nl_price = array.size(minim) >= 1 ? array.get(minim, 0) : low[center]
+                        float nr_price = array.size(minim) >= 2 ? array.get(minim, 1) : low[center]
+                        float neckline = (nl_price + nr_price) / 2
+                        float[] prices = array.from(left_shoulder, nl_price, head_price, nr_price, right_shoulder)
+                        float tgt = neckline - (head_price - neckline)
+
+                        result := PatternResult.new("hs", bar_index, bars, prices, na, na, na, na, tgt, false)
+
+        result
+
+// ═══════════════════════════════════════════════════════════════
+// PATTERN DETECTION: INVERSE HEAD & SHOULDERS
+// Based on zeta-zetra inverse_head_and_shoulders.py
+// ═══════════════════════════════════════════════════════════════
+f_detect_ihs(int lookback) =>
+    PatternResult result = na
+
+    if not i_ihs_en
+        result
+    else
+        int half = int(lookback / 2)
+        int center = half
+
+        bool main_pl = f_is_pivot_low(center, i_pivot_left_hs, i_pivot_left_hs)
+        bool short_pl = f_is_pivot_low(center, i_pivot_short_hs, i_pivot_short_hs)
+
+        if main_pl and short_pl
+            array<float> maxim = array.new<float>()
+            array<int>   xxmax = array.new<int>()
+            array<float> minim = array.new<float>()
+            array<int>   xxmin = array.new<int>()
+            int maxb = 0
+            int maxa = 0
+            int minb = 0
+            int mina = 0
+
+            int scan_start = math.min(center + half, bar_index)
+            int scan_end   = math.max(center - half, 0)
+
+            for i = scan_start to scan_end
+                bool is_spl = f_is_pivot_low(i, i_pivot_short_hs, i_pivot_short_hs)
+                bool is_sph = f_is_pivot_high(i, i_pivot_short_hs, i_pivot_short_hs)
+
+                if is_spl
+                    array.push(minim, low[i])
+                    array.push(xxmin, bar_index - i)
+                    if i > center
+                        minb += 1
+                    else if i < center
+                        mina += 1
+
+                if is_sph
+                    array.push(maxim, high[i])
+                    array.push(xxmax, bar_index - i)
+                    if i > center
+                        maxb += 1
+                    else if i < center
+                        maxa += 1
+
+            if minb >= 1 and mina >= 1 and maxb >= 1 and maxa >= 1 and array.size(minim) >= 3 and array.size(maxim) >= 2
+                // Find head (lowest trough)
+                int headidx = 0
+                float headval = array.get(minim, 0)
+                for i = 1 to array.size(minim) - 1
+                    if array.get(minim, i) < headval
+                        headval := array.get(minim, i)
+                        headidx := i
+
+                if headidx > 0 and headidx < array.size(minim) - 1
+                    float left_shoulder  = array.get(minim, headidx - 1)
+                    float right_shoulder = array.get(minim, headidx + 1)
+                    float head_price     = array.get(minim, headidx)
+
+                    float ihs_ratio = 1.0 / i_hs_head_ratio  // Invert for inverse pattern
+                    bool head_below_left  = head_price < left_shoulder and (head_price / left_shoulder) < 1.0
+                    bool head_below_right = head_price < right_shoulder and (head_price / right_shoulder) < 1.0
+
+                    // Neckline regression on highs
+                    array<float> xxmax_f = array.new<float>()
+                    for i = 0 to array.size(xxmax) - 1
+                        array.push(xxmax_f, float(array.get(xxmax, i)))
+                    [slmax, _, _] = f_linregress(xxmax_f, maxim)
+
+                    bool neck_flat = math.abs(slmax) <= i_hs_neck_slope
+
+                    if head_below_left and head_below_right and neck_flat
+                        int ls_bar = array.get(xxmin, headidx - 1)
+                        int head_bar = array.get(xxmin, headidx)
+                        int rs_bar = array.get(xxmin, headidx + 1)
+                        int nl_bar = array.size(xxmax) >= 1 ? array.get(xxmax, 0) : ls_bar
+                        int nr_bar = array.size(xxmax) >= 2 ? array.get(xxmax, 1) : rs_bar
+
+                        int[] bars = array.from(ls_bar, nl_bar, head_bar, nr_bar, rs_bar)
+                        float nl_price = array.size(maxim) >= 1 ? array.get(maxim, 0) : high[center]
+                        float nr_price = array.size(maxim) >= 2 ? array.get(maxim, 1) : high[center]
+                        float neckline = (nl_price + nr_price) / 2
+                        float[] prices = array.from(left_shoulder, nl_price, head_price, nr_price, right_shoulder)
+                        float tgt = neckline + (neckline - head_price)
+
+                        result := PatternResult.new("ihs", bar_index, bars, prices, na, na, na, na, tgt, true)
+
+        result
+
+// ═══════════════════════════════════════════════════════════════
+// PATTERN DETECTION: TRIANGLES (Ascending, Descending, Symmetrical)
+// Based on zeta-zetra triangles.py
+// ═══════════════════════════════════════════════════════════════
+f_detect_triangle(int lookback, int left, int right) =>
+    PatternResult result = na
+
+    if not i_tri_asc_en and not i_tri_desc_en and not i_tri_sym_en
+        result
+    else
+        [hi_bars, hi_prices, lo_bars, lo_prices, _, _, _] = f_collect_pivots(lookback, left, right)
+
+        if array.size(hi_bars) >= i_tri_min_pts and array.size(lo_bars) >= i_tri_min_pts
+            // Linear regression on highs
+            array<float> hi_bars_f = array.new<float>()
+            for i = 0 to array.size(hi_bars) - 1
+                array.push(hi_bars_f, float(array.get(hi_bars, i)))
+            [slmax, intmax, r2max] = f_linregress(hi_bars_f, hi_prices)
+
+            // Linear regression on lows
+            array<float> lo_bars_f = array.new<float>()
+            for i = 0 to array.size(lo_bars) - 1
+                array.push(lo_bars_f, float(array.get(lo_bars, i)))
+            [slmin, intmin, r2min] = f_linregress(lo_bars_f, lo_prices)
+
+            bool good_fit = r2max >= i_tri_r2 and r2min >= i_tri_r2
+
+            if good_fit
+                // Symmetrical Triangle: highs falling, lows rising
+                if i_tri_sym_en and slmin >= i_tri_flat_tol and slmax <= -i_tri_flat_tol
+                    int first_bar = math.min(array.size(hi_bars) > 0 ? array.get(hi_bars, 0) : bar_index, array.size(lo_bars) > 0 ? array.get(lo_bars, 0) : bar_index)
+                    int last_bar = bar_index
+                    float height = (intmax + slmax * first_bar) - (intmin + slmin * first_bar)
+                    // Breakout direction unknown for symmetrical
+                    float tgt_up = (slmax * last_bar + intmax) + height * 0.618
+                    float tgt_dn = (slmin * last_bar + intmin) - height * 0.618
+
+                    int[] bars = array.new<int>()
+                    float[] prices = array.new<float>()
+                    for i = 0 to array.size(hi_bars) - 1
+                        array.push(bars, array.get(hi_bars, i))
+                        array.push(prices, array.get(hi_prices, i))
+                    for i = 0 to array.size(lo_bars) - 1
+                        array.push(bars, array.get(lo_bars, i))
+                        array.push(prices, array.get(lo_prices, i))
+
+                    result := PatternResult.new("sym_tri", bar_index, bars, prices, slmax, slmin, intmax, intmin, close > (slmax * bar_index + intmax + slmin * bar_index + intmin) / 2 ? tgt_up : tgt_dn, na)
+
+                // Ascending Triangle: lows rising, highs flat
+                else if i_tri_asc_en and slmin >= i_tri_flat_tol and math.abs(slmax) <= i_tri_flat_tol
+                    float resistance = intmax + slmax * bar_index
+                    float support = intmin + slmin * bar_index
+                    float height = resistance - support
+                    float tgt = resistance + height * 0.618
+
+                    int[] bars = array.new<int>()
+                    float[] prices = array.new<float>()
+                    for i = 0 to array.size(hi_bars) - 1
+                        array.push(bars, array.get(hi_bars, i))
+                        array.push(prices, array.get(hi_prices, i))
+                    for i = 0 to array.size(lo_bars) - 1
+                        array.push(bars, array.get(lo_bars, i))
+                        array.push(prices, array.get(lo_prices, i))
+
+                    result := PatternResult.new("asc_tri", bar_index, bars, prices, slmax, slmin, intmax, intmin, tgt, true)
+
+                // Descending Triangle: highs falling, lows flat
+                else if i_tri_desc_en and slmax <= -i_tri_flat_tol and math.abs(slmin) <= i_tri_flat_tol
+                    float resistance = intmax + slmax * bar_index
+                    float support = intmin + slmin * bar_index
+                    float height = resistance - support
+                    float tgt = support - height * 0.618
+
+                    int[] bars = array.new<int>()
+                    float[] prices = array.new<float>()
+                    for i = 0 to array.size(hi_bars) - 1
+                        array.push(bars, array.get(hi_bars, i))
+                        array.push(prices, array.get(hi_prices, i))
+                    for i = 0 to array.size(lo_bars) - 1
+                        array.push(bars, array.get(lo_bars, i))
+                        array.push(prices, array.get(lo_prices, i))
+
+                    result := PatternResult.new("desc_tri", bar_index, bars, prices, slmax, slmin, intmax, intmin, tgt, false)
+
+        result
+
+// ═══════════════════════════════════════════════════════════════
+// PATTERN DETECTION: FLAG
+// Based on zeta-zetra flag.py - Parallel channel with same-direction slopes
+// ═══════════════════════════════════════════════════════════════
+f_detect_flag(int lookback, int left, int right) =>
+    PatternResult result = na
+
+    if not i_flag_en
+        result
+    else
+        [hi_bars, hi_prices, lo_bars, lo_prices, _, _, _] = f_collect_pivots(lookback, left, right)
+
+        bool enough_points = (array.size(hi_bars) >= i_flag_min_pts or array.size(lo_bars) >= i_flag_min_pts) and array.size(hi_bars) > 0 and array.size(lo_bars) > 0
+
+        if enough_points
+            // Monotonicity check: prices must be consistently moving in one direction
+            bool mono_hi = true
+            bool mono_lo = true
+
+            if array.size(hi_prices) >= 2
+                for i = 1 to array.size(hi_prices) - 1
+                    if array.get(hi_prices, i) < array.get(hi_prices, i - 1) - syminfo.mintick * 10
+                        mono_hi := false
+                        break
+            if not mono_hi
+                // Check if consistently decreasing
+                mono_hi := true
+                for i = 1 to array.size(hi_prices) - 1
+                    if array.get(hi_prices, i) > array.get(hi_prices, i - 1) + syminfo.mintick * 10
+                        mono_hi := false
+                        break
+
+            if array.size(lo_prices) >= 2
+                for i = 1 to array.size(lo_prices) - 1
+                    if array.get(lo_prices, i) < array.get(lo_prices, i - 1) - syminfo.mintick * 10
+                        mono_lo := false
+                        break
+            if not mono_lo
+                mono_lo := true
+                for i = 1 to array.size(lo_prices) - 1
+                    if array.get(lo_prices, i) > array.get(lo_prices, i - 1) + syminfo.mintick * 10
+                        mono_lo := false
+                        break
+
+            if mono_hi and mono_lo
+                array<float> hi_bars_f = array.new<float>()
+                for i = 0 to array.size(hi_bars) - 1
+                    array.push(hi_bars_f, float(array.get(hi_bars, i)))
+                [slmax, intmax, r2max] = f_linregress(hi_bars_f, hi_prices)
+
+                array<float> lo_bars_f = array.new<float>()
+                for i = 0 to array.size(lo_bars) - 1
+                    array.push(lo_bars_f, float(array.get(lo_bars, i)))
+                [slmin, intmin, r2min] = f_linregress(lo_bars_f, lo_prices)
+
+                bool good_fit = r2max >= i_flag_r2 and r2min >= i_flag_r2
+                // Both slopes must have the same sign (both positive or both negative)
+                bool same_direction = (slmax > 0 and slmin > 0) or (slmax < 0 and slmin < 0)
+                // Parallelism check
+                bool parallel = math.abs(slmax) > 1e-10 ? (slmin / slmax >= i_flag_ratio_lo and slmin / slmax <= i_flag_ratio_hi) : false
+
+                if good_fit and same_direction and parallel
+                    bool is_bull_flag = slmax < 0 and slmin < 0  // Bearish flag = bull continuation
+                    float channel_height = (intmax + slmax * bar_index) - (intmin + slmin * bar_index)
+                    float tgt = is_bull_flag ? (intmax + slmax * bar_index) + channel_height : (intmin + slmin * bar_index) - channel_height
+
+                    int[] bars = array.new<int>()
+                    float[] prices = array.new<float>()
+                    for i = 0 to array.size(hi_bars) - 1
+                        array.push(bars, array.get(hi_bars, i))
+                        array.push(prices, array.get(hi_prices, i))
+                    for i = 0 to array.size(lo_bars) - 1
+                        array.push(bars, array.get(lo_bars, i))
+                        array.push(prices, array.get(lo_prices, i))
+
+                    result := PatternResult.new("flag", bar_index, bars, prices, slmax, slmin, intmax, intmin, tgt, is_bull_flag)
+
+        result
+
+// ═══════════════════════════════════════════════════════════════
+// PATTERN DETECTION: PENNANT
+// Based on zeta-zetra pennant.py - Converging lines with symmetric slopes
+// ═══════════════════════════════════════════════════════════════
+f_detect_pennant(int lookback, int left, int right) =>
+    PatternResult result = na
+
+    if not i_pennant_en
+        result
+    else
+        [hi_bars, hi_prices, lo_bars, lo_prices, _, _, _] = f_collect_pivots(lookback, left, right)
+
+        bool enough_points = (array.size(hi_bars) >= i_pennant_min_pts or array.size(lo_bars) >= i_pennant_min_pts) and array.size(hi_bars) > 0 and array.size(lo_bars) > 0
+
+        if enough_points
+            array<float> hi_bars_f = array.new<float>()
+            for i = 0 to array.size(hi_bars) - 1
+                array.push(hi_bars_f, float(array.get(hi_bars, i)))
+            [slmax, intmax, r2max] = f_linregress(hi_bars_f, hi_prices)
+
+            array<float> lo_bars_f = array.new<float>()
+            for i = 0 to array.size(lo_bars) - 1
+                array.push(lo_bars_f, float(array.get(lo_bars, i)))
+            [slmin, intmin, r2min] = f_linregress(lo_bars_f, lo_prices)
+
+            bool good_fit = r2max >= i_pennant_r2 and r2min >= i_pennant_r2
+            // Pennant: highs falling, lows rising (converging)
+            bool converging = slmin > 0 and slmax < 0
+            // Symmetric slopes
+            bool symmetric = math.abs(slmin) > 1e-10 ? (math.abs(slmax / slmin) >= i_pennant_ratio_lo and math.abs(slmax / slmin) <= i_pennant_ratio_hi) : false
+
+            if good_fit and converging and symmetric
+                float apex_x = math.abs(slmax - slmin) > 1e-10 ? (intmin - intmax) / (slmax - slmin) : float(bar_index + 50)
+                float mid_price = (intmax + slmax * bar_index + intmin + slmin * bar_index) / 2
+                float channel_height = (intmax + slmax * float(array.get(hi_bars, 0))) - (intmin + slmin * float(array.get(lo_bars, 0)))
+                // Direction based on prior trend (price vs midline)
+                bool is_bullish = close > mid_price
+                float tgt = is_bullish ? close + channel_height * 0.618 : close - channel_height * 0.618
+
+                int[] bars = array.new<int>()
+                float[] prices = array.new<float>()
+                for i = 0 to array.size(hi_bars) - 1
+                    array.push(bars, array.get(hi_bars, i))
+                    array.push(prices, array.get(hi_prices, i))
+                for i = 0 to array.size(lo_bars) - 1
+                    array.push(bars, array.get(lo_bars, i))
+                    array.push(prices, array.get(lo_prices, i))
+
+                result := PatternResult.new("pennant", bar_index, bars, prices, slmax, slmin, intmax, intmin, tgt, is_bullish)
+
+        result
+
+// ═══════════════════════════════════════════════════════════════
+// DRAWING FUNCTIONS
+// ═══════════════════════════════════════════════════════════════
+f_get_pattern_color(string ptype) =>
+    switch ptype
+        "double_top"    => i_col_double_top
+        "double_bottom" => i_col_double_bot
+        "hs"            => i_col_hs
+        "ihs"           => i_col_ihs
+        "asc_tri"       => i_col_tri_asc
+        "desc_tri"      => i_col_tri_desc
+        "sym_tri"       => i_col_tri_sym
+        "flag"          => i_col_flag
+        "pennant"       => i_col_pennant
+        => color.white
+
+f_get_pattern_name(string ptype) =>
+    switch ptype
+        "double_top"    => "Double Top"
+        "double_bottom" => "Double Bottom"
+        "hs"            => "H&S"
+        "ihs"           => "Inv H&S"
+        "asc_tri"       => "Asc Triangle"
+        "desc_tri"      => "Desc Triangle"
+        "sym_tri"       => "Sym Triangle"
+        "flag"          => "Flag"
+        "pennant"       => "Pennant"
+        => ""
+
+f_get_pattern_emoji(string ptype) =>
+    switch ptype
+        "double_top"    => "🔴"
+        "double_bottom" => "🟢"
+        "hs"            => "🔴"
+        "ihs"           => "🟢"
+        "asc_tri"       => "🟢"
+        "desc_tri"      => "🔴"
+        "sym_tri"       => "🟡"
+        "flag"          => "🏳"
+        "pennant"       => "🔻"
+        => ""
+
+f_label_size() =>
+    switch i_label_size
+        "Tiny"   => size.tiny
+        "Small"  => size.small
+        "Normal" => size.normal
+        => size.small
+
+f_draw_point_pattern(PatternResult p) =>
+    color col = f_get_pattern_color(p.ptype)
+    string name = f_get_pattern_name(p.ptype)
+
+    if array.size(p.bar_indices) >= 2 and array.size(p.prices) >= 2
+        // Draw lines connecting the points
+        for i = 0 to array.size(p.bar_indices) - 2
+            int x1 = array.get(p.bar_indices, i)
+            int x2 = array.get(p.bar_indices, i + 1)
+            float y1 = array.get(p.prices, i)
+            float y2 = array.get(p.prices, i + 1)
+            pattern_lines.push(line.new(x1, y1, x2, y2, color=col, width=i_line_width, style=line.style_solid))
+
+        // Label at the center
+        int mid_bar = array.get(p.bar_indices, int(array.size(p.bar_indices) / 2))
+        float mid_price = array.get(p.prices, int(array.size(p.prices) / 2))
+        bool label_above = p.ptype == "double_top" or p.ptype == "hs"
+        string tgt_str = not na(p.target) ? "\nTP: " + str.tostring(p.target, format.mintick) : ""
+        pattern_labels.push(label.new(mid_bar, mid_price, name + tgt_str, style=label_above ? label.style_label_down : label.style_label_up, color=color.new(col, 85), textcolor=col, size=f_label_size()))
+
+f_draw_regression_pattern(PatternResult p) =>
+    color col = f_get_pattern_color(p.ptype)
+    string name = f_get_pattern_name(p.ptype)
+
+    if not na(p.sl_upper) and not na(p.sl_lower)
+        // Determine x range from bar_indices
+        int first_bar = bar_index
+        int last_bar = bar_index
+        if array.size(p.bar_indices) > 0
+            first_bar := array.get(p.bar_indices, 0)
+            last_bar := array.get(p.bar_indices, array.size(p.bar_indices) - 1)
+
+        // Upper trendline
+        float y1_upper = p.sl_upper * first_bar + p.int_upper
+        float y2_upper = p.sl_upper * last_bar + p.int_upper
+        pattern_lines.push(line.new(first_bar, y1_upper, last_bar, y2_upper, color=col, width=i_line_width, style=line.style_solid))
+
+        // Lower trendline
+        float y1_lower = p.sl_lower * first_bar + p.int_lower
+        float y2_lower = p.sl_lower * last_bar + p.int_lower
+        pattern_lines.push(line.new(first_bar, y1_lower, last_bar, y2_lower, color=col, width=i_line_width, style=line.style_solid))
+
+        // Target line (dashed)
+        if not na(p.target)
+            pattern_lines.push(line.new(last_bar, p.target, last_bar + 10, p.target, color=col, width=1, style=line.style_dashed))
+            pattern_labels.push(label.new(last_bar + 11, p.target, "TP", style=label.style_label_left, color=color.new(col, 90), textcolor=col, size=size.tiny))
+
+        // Pattern name label
+        int mid_bar = int((first_bar + last_bar) / 2)
+        float mid_price = (y1_upper + y2_lower) / 2
+        string tgt_str = not na(p.target) ? "\nTP: " + str.tostring(p.target, format.mintick) : ""
+        pattern_labels.push(label.new(mid_bar, mid_price, name + tgt_str, style=label.style_label_center, color=color.new(col, 85), textcolor=col, size=f_label_size()))
+
+// ═══════════════════════════════════════════════════════════════
+// MAIN DETECTION + DRAWING
+// ═══════════════════════════════════════════════════════════════
+if barstate.islast
+    // Clean previous drawings
+    for ln in pattern_lines
+        line.delete(ln)
+    pattern_lines.clear()
+    for lbl in pattern_labels
+        label.delete(lbl)
+    pattern_labels.clear()
+    for b in pattern_boxes
+        box.delete(b)
+    pattern_boxes.clear()
+    for lbl in pivot_labels
+        label.delete(lbl)
+    pivot_labels.clear()
+
+    // Reset counters
+    total_double_top := 0
+    total_double_bot := 0
+    total_hs := 0
+    total_ihs := 0
+    total_asc_tri := 0
+    total_desc_tri := 0
+    total_sym_tri := 0
+    total_flag := 0
+    total_pennant := 0
+
+    detected_patterns.clear()
+
+    // Show pivot points if enabled
+    if i_show_pivots
+        int max_pvt = math.min(i_lookback + 20, bar_index)
+        for i = max_pvt to 0
+            int pt = f_pivot_type(i, i_pivot_left, i_pivot_right)
+            if pt == 1 or pt == 3
+                pivot_labels.push(label.new(bar_index - i, low[i], "▲", style=label.style_label_up, color=color.new(color.white, 100), textcolor=i_col_pivot_lo, size=size.tiny))
+            if pt == 2 or pt == 3
+                pivot_labels.push(label.new(bar_index - i, high[i], "▼", style=label.style_label_down, color=color.new(color.white, 100), textcolor=i_col_pivot_hi, size=size.tiny))
+
+    // ── Detect Double Top/Bottom ──
+    PatternResult double_result = f_detect_double(i_lookback, i_pivot_left, i_pivot_right)
+    if not na(double_result)
+        detected_patterns.push(double_result)
+        if double_result.ptype == "double_top"
+            total_double_top += 1
+        else
+            total_double_bot += 1
+
+    // ── Detect Head & Shoulders ──
+    PatternResult hs_result = f_detect_hs(i_hs_lookback)
+    if not na(hs_result)
+        detected_patterns.push(hs_result)
+        total_hs += 1
+
+    // ── Detect Inverse Head & Shoulders ──
+    PatternResult ihs_result = f_detect_ihs(i_hs_lookback)
+    if not na(ihs_result)
+        detected_patterns.push(ihs_result)
+        total_ihs += 1
+
+    // ── Detect Triangles ──
+    PatternResult tri_result = f_detect_triangle(i_lookback, i_pivot_left, i_pivot_right)
+    if not na(tri_result)
+        detected_patterns.push(tri_result)
+        if tri_result.ptype == "asc_tri"
+            total_asc_tri += 1
+        else if tri_result.ptype == "desc_tri"
+            total_desc_tri += 1
+        else
+            total_sym_tri += 1
+
+    // ── Detect Flag ──
+    PatternResult flag_result = f_detect_flag(i_lookback, i_pivot_left, i_pivot_right)
+    if not na(flag_result)
+        detected_patterns.push(flag_result)
+        total_flag += 1
+
+    // ── Detect Pennant ──
+    PatternResult pennant_result = f_detect_pennant(math.min(i_lookback, 25), i_pivot_left, i_pivot_right)
+    if not na(pennant_result)
+        detected_patterns.push(pennant_result)
+        total_pennant += 1
+
+    // ── Draw all detected patterns ──
+    int draw_count = 0
+    for p in detected_patterns
+        if draw_count >= i_max_patterns
+            break
+
+        bool is_regression = p.ptype == "asc_tri" or p.ptype == "desc_tri" or p.ptype == "sym_tri" or p.ptype == "flag" or p.ptype == "pennant"
+
+        if is_regression
+            f_draw_regression_pattern(p)
+        else
+            f_draw_point_pattern(p)
+
+        draw_count += 1
+
+    // ═══════════════════════════════════════════════════════════════
+    // INFO TABLE
+    // ═══════════════════════════════════════════════════════════════
+    if i_show_table
+        string pos = switch i_table_pos
+            "Top Left"     => position.top_left
+            "Top Right"    => position.top_right
+            "Bottom Left"  => position.bottom_left
+            => position.bottom_right
+
+        string tbl_sz = i_label_size == "Tiny" ? size.tiny : i_label_size == "Small" ? size.small : size.normal
+
+        int n_patterns = detected_patterns.size()
+        int rows = 3 + n_patterns
+
+        var table info_tbl = table.new(pos, 3, rows + 1, bgcolor=color.new(#1E1E1E, 10), border_width=1, border_color=color.new(#333333, 0), frame_width=1, frame_color=color.new(#555555, 0))
+
+        // Header
+        table.cell(info_tbl, 0, 0, "📊 Auto Chart Patterns Pro", text_color=#FFFFFF, text_size=tbl_sz, bgcolor=color.new(#2196F3, 20))
+        table.merge_cells(info_tbl, 0, 0, 2, 0)
+
+        // Settings row
+        table.cell(info_tbl, 0, 1, "LB: " + str.tostring(i_lookback), text_color=#AAAAAA, text_size=size.tiny, bgcolor=color.new(#1E1E1E, 10))
+        table.cell(info_tbl, 1, 1, "Pivot: " + str.tostring(i_pivot_left) + "/" + str.tostring(i_pivot_right), text_color=#AAAAAA, text_size=size.tiny, bgcolor=color.new(#1E1E1E, 10))
+        table.cell(info_tbl, 2, 1, str.tostring(n_patterns) + " found", text_color=n_patterns > 0 ? #00E676 : #FF1744, text_size=size.tiny, bgcolor=color.new(#1E1E1E, 10))
+
+        // Separator
+        table.cell(info_tbl, 0, 2, "━━━━━━━━━━━━━━━━━━━━", text_color=#333333, text_size=size.tiny, bgcolor=color.new(#1E1E1E, 10))
+        table.merge_cells(info_tbl, 0, 2, 2, 2)
+
+        // Pattern details
+        if n_patterns > 0
+            for i = 0 to math.min(n_patterns - 1, i_max_patterns - 1)
+                PatternResult p = detected_patterns.get(i)
+                string emoji = f_get_pattern_emoji(p.ptype)
+                string pname = f_get_pattern_name(p.ptype)
+                color pcol = f_get_pattern_color(p.ptype)
+                string tgt_str = not na(p.target) ? str.tostring(p.target, format.mintick) : "-"
+                string dir_str = na(p.is_bullish) ? "◐" : p.is_bullish ? "▲" : "▼"
+
+                int row = 3 + i
+                table.cell(info_tbl, 0, row, emoji + " " + pname, text_color=pcol, text_size=size.tiny, bgcolor=color.new(#1E1E1E, 10))
+                table.cell(info_tbl, 1, row, dir_str, text_color=na(p.is_bullish) ? #FFEA00 : p.is_bullish ? #00E676 : #FF1744, text_size=size.tiny, bgcolor=color.new(#1E1E1E, 10))
+                table.cell(info_tbl, 2, row, "TP: " + tgt_str, text_color=#AAAAAA, text_size=size.tiny, bgcolor=color.new(#1E1E1E, 10))
+        else
+            table.cell(info_tbl, 0, 3, "No patterns detected", text_color=#777777, text_size=size.tiny, bgcolor=color.new(#1E1E1E, 10))
+            table.merge_cells(info_tbl, 0, 3, 2, 3)
+
+// ═══════════════════════════════════════════════════════════════
+// ALERTS
+// ═══════════════════════════════════════════════════════════════
+// Double Top/Bottom detection on each bar (not just last bar)
+var string last_alert_type = ""
+var int last_alert_bar = 0
+
+// Simple per-bar detection for alerts
+int simple_pt = f_pivot_type(i_pivot_right, i_pivot_left, i_pivot_right)
+bool new_pivot = simple_pt != 0
+
+if barstate.isconfirmed and new_pivot and bar_index != last_alert_bar
+    // Quick check for common patterns
+    if i_alert_double
+        PatternResult d = f_detect_double(i_lookback, i_pivot_left, i_pivot_right)
+        if not na(d)
+            if d.ptype == "double_top" and last_alert_type != "double_top"
+                alert("🔴 Double Top detected on " + syminfo.ticker + " | Target: " + str.tostring(d.target, format.mintick), alert.freq_once_per_bar)
+                last_alert_type := "double_top"
+                last_alert_bar := bar_index
+            if d.ptype == "double_bottom" and last_alert_type != "double_bottom"
+                alert("🟢 Double Bottom detected on " + syminfo.ticker + " | Target: " + str.tostring(d.target, format.mintick), alert.freq_once_per_bar)
+                last_alert_type := "double_bottom"
+                last_alert_bar := bar_index
+
+    if i_alert_triangle
+        PatternResult t = f_detect_triangle(i_lookback, i_pivot_left, i_pivot_right)
+        if not na(t)
+            string tri_name = f_get_pattern_name(t.ptype)
+            if t.ptype != last_alert_type
+                string dir = na(t.is_bullish) ? "" : t.is_bullish ? " Bullish" : " Bearish"
+                alert(tri_name + dir + " detected on " + syminfo.ticker + " | Target: " + str.tostring(t.target, format.mintick), alert.freq_once_per_bar)
+                last_alert_type := t.ptype
+                last_alert_bar := bar_index
+
+    if i_alert_flag
+        PatternResult f = f_detect_flag(i_lookback, i_pivot_left, i_pivot_right)
+        if not na(f) and last_alert_type != "flag"
+            string dir = na(f.is_bullish) ? "" : f.is_bullish ? " Bull" : " Bear"
+            alert("🏳 Flag" + dir + " detected on " + syminfo.ticker + " | Target: " + str.tostring(f.target, format.mintick), alert.freq_once_per_bar)
+            last_alert_type := "flag"
+            last_alert_bar := bar_index
+
+    if i_alert_pennant
+        PatternResult pn = f_detect_pennant(math.min(i_lookback, 25), i_pivot_left, i_pivot_right)
+        if not na(pn) and last_alert_type != "pennant"
+            string dir = na(pn.is_bullish) ? "" : pn.is_bullish ? " Bullish" : " Bearish"
+            alert("🔻 Pennant" + dir + " detected on " + syminfo.ticker + " | Target: " + str.tostring(pn.target, format.mintick), alert.freq_once_per_bar)
+            last_alert_type := "pennant"
+            last_alert_bar := bar_index
