@@ -108,7 +108,7 @@ type PatternResult
     float  int_upper   // upper trendline intercept
     float  int_lower   // lower trendline intercept
     float  target      // projected target price
-    bool   is_bullish  // direction
+    int    direction   // 1=bullish, -1=bearish, 0=neutral
 
 // ═══════════════════════════════════════════════════════════════
 // VARIABLES
@@ -285,7 +285,7 @@ f_detect_double(int lookback, int left, int right) =>
                 float neckline = math.min(p0, p2, p4)
                 float peak_avg = (p1 + p3) / 2
                 float tgt = neckline - (peak_avg - neckline)
-                result := PatternResult.new("double_top", bar_index, bars, prices, na, na, na, na, tgt, false)
+                result := PatternResult.new("double_top", bar_index, bars, prices, na, na, na, na, tgt, -1)
 
             if is_double_bot
                 int[] bars = array.from(array.get(pvt_bars, 0), array.get(pvt_bars, 1), array.get(pvt_bars, 2), array.get(pvt_bars, 3), array.get(pvt_bars, 4))
@@ -293,7 +293,7 @@ f_detect_double(int lookback, int left, int right) =>
                 float neckline = math.max(p0, p2, p4)
                 float trough_avg = (p1 + p3) / 2
                 float tgt = neckline + (neckline - trough_avg)
-                result := PatternResult.new("double_bottom", bar_index, bars, prices, na, na, na, na, tgt, true)
+                result := PatternResult.new("double_bottom", bar_index, bars, prices, na, na, na, na, tgt, 1)
 
         result
 
@@ -388,7 +388,7 @@ f_detect_hs(int lookback) =>
                         float[] prices = array.from(left_shoulder, nl_price, head_price, nr_price, right_shoulder)
                         float tgt = neckline - (head_price - neckline)
 
-                        result := PatternResult.new("hs", bar_index, bars, prices, na, na, na, na, tgt, false)
+                        result := PatternResult.new("hs", bar_index, bars, prices, na, na, na, na, tgt, -1)
 
         result
 
@@ -481,7 +481,7 @@ f_detect_ihs(int lookback) =>
                         float[] prices = array.from(left_shoulder, nl_price, head_price, nr_price, right_shoulder)
                         float tgt = neckline + (neckline - head_price)
 
-                        result := PatternResult.new("ihs", bar_index, bars, prices, na, na, na, na, tgt, true)
+                        result := PatternResult.new("ihs", bar_index, bars, prices, na, na, na, na, tgt, 1)
 
         result
 
@@ -531,7 +531,7 @@ f_detect_triangle(int lookback, int left, int right) =>
                         array.push(bars, array.get(lo_bars, i))
                         array.push(prices, array.get(lo_prices, i))
 
-                    result := PatternResult.new("sym_tri", bar_index, bars, prices, slmax, slmin, intmax, intmin, close > (slmax * bar_index + intmax + slmin * bar_index + intmin) / 2 ? tgt_up : tgt_dn, na)
+                    result := PatternResult.new("sym_tri", bar_index, bars, prices, slmax, slmin, intmax, intmin, close > (slmax * bar_index + intmax + slmin * bar_index + intmin) / 2 ? tgt_up : tgt_dn, 0)
 
                 // Ascending Triangle: lows rising, highs flat
                 else if i_tri_asc_en and slmin >= i_tri_flat_tol and math.abs(slmax) <= i_tri_flat_tol
@@ -549,7 +549,7 @@ f_detect_triangle(int lookback, int left, int right) =>
                         array.push(bars, array.get(lo_bars, i))
                         array.push(prices, array.get(lo_prices, i))
 
-                    result := PatternResult.new("asc_tri", bar_index, bars, prices, slmax, slmin, intmax, intmin, tgt, true)
+                    result := PatternResult.new("asc_tri", bar_index, bars, prices, slmax, slmin, intmax, intmin, tgt, 1)
 
                 // Descending Triangle: highs falling, lows flat
                 else if i_tri_desc_en and slmax <= -i_tri_flat_tol and math.abs(slmin) <= i_tri_flat_tol
@@ -567,7 +567,7 @@ f_detect_triangle(int lookback, int left, int right) =>
                         array.push(bars, array.get(lo_bars, i))
                         array.push(prices, array.get(lo_prices, i))
 
-                    result := PatternResult.new("desc_tri", bar_index, bars, prices, slmax, slmin, intmax, intmin, tgt, false)
+                    result := PatternResult.new("desc_tri", bar_index, bars, prices, slmax, slmin, intmax, intmin, tgt, -1)
 
         result
 
@@ -646,7 +646,7 @@ f_detect_flag(int lookback, int left, int right) =>
                         array.push(bars, array.get(lo_bars, i))
                         array.push(prices, array.get(lo_prices, i))
 
-                    result := PatternResult.new("flag", bar_index, bars, prices, slmax, slmin, intmax, intmin, tgt, is_bull_flag)
+                    result := PatternResult.new("flag", bar_index, bars, prices, slmax, slmin, intmax, intmin, tgt, is_bull_flag ? 1 : -1)
 
         result
 
@@ -698,7 +698,7 @@ f_detect_pennant(int lookback, int left, int right) =>
                     array.push(bars, array.get(lo_bars, i))
                     array.push(prices, array.get(lo_prices, i))
 
-                result := PatternResult.new("pennant", bar_index, bars, prices, slmax, slmin, intmax, intmin, tgt, is_bullish)
+                result := PatternResult.new("pennant", bar_index, bars, prices, slmax, slmin, intmax, intmin, tgt, is_bullish ? 1 : -1)
 
         result
 
@@ -942,11 +942,11 @@ if barstate.islast
                 string pname = f_get_pattern_name(p.ptype)
                 color pcol = f_get_pattern_color(p.ptype)
                 string tgt_str = not na(p.target) ? str.tostring(p.target, format.mintick) : "-"
-                string dir_str = na(p.is_bullish) ? "◐" : p.is_bullish ? "▲" : "▼"
+                string dir_str = p.direction == 0 ? "◐" : p.direction == 1 ? "▲" : "▼"
 
                 int row = 3 + i
                 table.cell(info_tbl, 0, row, emoji + " " + pname, text_color=pcol, text_size=size.tiny, bgcolor=color.new(#1E1E1E, 10))
-                table.cell(info_tbl, 1, row, dir_str, text_color=na(p.is_bullish) ? #FFEA00 : p.is_bullish ? #00E676 : #FF1744, text_size=size.tiny, bgcolor=color.new(#1E1E1E, 10))
+                table.cell(info_tbl, 1, row, dir_str, text_color=p.direction == 0 ? #FFEA00 : p.direction == 1 ? #00E676 : #FF1744, text_size=size.tiny, bgcolor=color.new(#1E1E1E, 10))
                 table.cell(info_tbl, 2, row, "TP: " + tgt_str, text_color=#AAAAAA, text_size=size.tiny, bgcolor=color.new(#1E1E1E, 10))
         else
             table.cell(info_tbl, 0, 3, "No patterns detected", text_color=#777777, text_size=size.tiny, bgcolor=color.new(#1E1E1E, 10))
@@ -982,7 +982,7 @@ if barstate.isconfirmed and new_pivot and bar_index != last_alert_bar
         if not na(t)
             string tri_name = f_get_pattern_name(t.ptype)
             if t.ptype != last_alert_type
-                string dir = na(t.is_bullish) ? "" : t.is_bullish ? " Bullish" : " Bearish"
+                string dir = t.direction == 0 ? "" : t.direction == 1 ? " Bullish" : " Bearish"
                 alert(tri_name + dir + " detected on " + syminfo.ticker + " | Target: " + str.tostring(t.target, format.mintick), alert.freq_once_per_bar)
                 last_alert_type := t.ptype
                 last_alert_bar := bar_index
@@ -990,7 +990,7 @@ if barstate.isconfirmed and new_pivot and bar_index != last_alert_bar
     if i_alert_flag
         PatternResult f = f_detect_flag(i_lookback, i_pivot_left, i_pivot_right)
         if not na(f) and last_alert_type != "flag"
-            string dir = na(f.is_bullish) ? "" : f.is_bullish ? " Bull" : " Bear"
+            string dir = f.direction == 0 ? "" : f.direction == 1 ? " Bull" : " Bear"
             alert("🏳 Flag" + dir + " detected on " + syminfo.ticker + " | Target: " + str.tostring(f.target, format.mintick), alert.freq_once_per_bar)
             last_alert_type := "flag"
             last_alert_bar := bar_index
@@ -998,7 +998,7 @@ if barstate.isconfirmed and new_pivot and bar_index != last_alert_bar
     if i_alert_pennant
         PatternResult pn = f_detect_pennant(math.min(i_lookback, 25), i_pivot_left, i_pivot_right)
         if not na(pn) and last_alert_type != "pennant"
-            string dir = na(pn.is_bullish) ? "" : pn.is_bullish ? " Bullish" : " Bearish"
+            string dir = pn.direction == 0 ? "" : pn.direction == 1 ? " Bullish" : " Bearish"
             alert("🔻 Pennant" + dir + " detected on " + syminfo.ticker + " | Target: " + str.tostring(pn.target, format.mintick), alert.freq_once_per_bar)
             last_alert_type := "pennant"
             last_alert_bar := bar_index
